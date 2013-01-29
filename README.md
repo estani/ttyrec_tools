@@ -12,4 +12,6 @@ Packages:
  * normalize typing
  * humanize typing 
 
+All implemented effects (and io) work as generators so you can chain them and 
+work in very large files.
 
