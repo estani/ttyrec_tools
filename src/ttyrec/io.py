@@ -20,7 +20,7 @@ _HEADER_SIZE = 3*4
 _TIMESTAMP = '%Y-%m-%d %H:%M:%S.%f'
 "This is the format of the exported time stamp when converting to/from ascii."
 
-_ASCII_HEAD = re.compile('^\[([0-9:. -]*)\] ([0-9]*)$')
+_ASCII_HEAD = re.compile('^\[([0-9:. -]*)\] ([0-9]*)(?: ([a-z]*))?$')
 "For extracting the header info stored in ascii."
 
 
@@ -56,22 +56,43 @@ object and expect to return the same object modified if required.
     with open(ascii_file, 'r') as fin:
         with open(tty_file , 'wb') as fout:
             try:
+                offset = timedelta()
                 while True:
                     line = fin.readline()
-                    dt_stamp, length = _ASCII_HEAD.match(line).groups()
-                    dt_stamp, length = datetime.strptime(dt_stamp, _TIMESTAMP), int(length)
+                    if not line: break
+                    
+                    dt_stamp, length, options = _ASCII_HEAD.match(line).groups()
+                    
+                    dt_stamp, length = datetime.strptime(dt_stamp, _TIMESTAMP) + offset, int(length)
                     if func:
                         dt_stamp = func(dt_stamp)
-                    sec, usec = int(mktime(dt_stamp.timetuple())), dt_stamp.microsecond
-                    header = pack(_HEADER, sec, usec, length)
+                    
                     payload = fin.read(length)
+                    if options:
+                        if 'i' in options:
+                            step = timedelta(microseconds=100000)
+                            #to accomodate first step
+                            step_stamp = dt_stamp - step    
+                            #this is input we must extend it in a typewritter similar manner
+                            for c in payload:
+                                step_stamp += step
+                                sec, usec = int(mktime(step_stamp.timetuple())), step_stamp.microsecond
+                                header = pack(_HEADER, sec, usec, 1)
+                                fout.write(header)
+                                fout.write(c)
+                            assert(fin.read(1)=='\n') #this should be a carriage return
+                            offset += (step_stamp - dt_stamp)
+                            continue
+                        
+                    sec, usec = int(mktime(dt_stamp.timetuple())), dt_stamp.microsecond             
+                    header = pack(_HEADER, sec, usec, length)
                     
                     fout.write(header)
                     fout.write(payload)
                     
                     assert(fin.read(1)=='\n') #this should be a carriage return
             except:
-                pass        
+                raise        
 
 
 def ttyrec2list(tty_file, func = None):
