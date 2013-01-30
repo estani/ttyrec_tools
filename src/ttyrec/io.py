@@ -53,12 +53,16 @@ def ascii2ttyrec(ascii_file, tty_file, func = None):
 :param func: if given will be applied to affect time. it is called with a datetime 
 object and expect to return the same object modified if required.
 """
+    entry_nr=0
+    line_nr=0
     with open(ascii_file, 'r') as fin:
         with open(tty_file , 'wb') as fout:
             try:
                 offset = timedelta()
                 while True:
                     line = fin.readline()
+                    entry_nr += 1
+                    line_nr += 1
                     if not line: break
                     
                     dt_stamp, length, options = _ASCII_HEAD.match(line).groups()
@@ -68,9 +72,10 @@ object and expect to return the same object modified if required.
                         dt_stamp = func(dt_stamp)
                     
                     payload = fin.read(length)
+                    line_nr += payload.count('\n')
                     if options:
                         if 'i' in options:
-                            step = timedelta(microseconds=100000)
+                            step = timedelta(microseconds=20000)
                             #to accomodate first step
                             step_stamp = dt_stamp - step    
                             #this is input we must extend it in a typewritter similar manner
@@ -81,6 +86,7 @@ object and expect to return the same object modified if required.
                                 fout.write(header)
                                 fout.write(c)
                             assert(fin.read(1)=='\n') #this should be a carriage return
+                            line_nr +=1
                             offset += (step_stamp - dt_stamp)
                             continue
                         
@@ -91,7 +97,9 @@ object and expect to return the same object modified if required.
                     fout.write(payload)
                     
                     assert(fin.read(1)=='\n') #this should be a carriage return
+                    line_nr +=1
             except:
+                print "Error in entry %s (line~%s): %s" % (entry_nr, line_nr, line)
                 raise        
 
 
