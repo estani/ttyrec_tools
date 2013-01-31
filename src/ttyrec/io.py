@@ -102,7 +102,47 @@ object and expect to return the same object modified if required.
                 print "Error in entry %s (line~%s): %s" % (entry_nr, line_nr, line)
                 raise        
 
-
+def ascii2list(ascii_file):
+    """:param ascii_file: ascii input file.
+:param tty_file: ttyrecord binary output file.
+"""
+    entry_nr=0
+    line_nr=0
+    with open(ascii_file, 'r') as fin:
+        try:
+            offset = timedelta()
+            while True:
+                line = fin.readline()
+                entry_nr += 1
+                line_nr += 1
+                if not line: break
+                
+                dt_stamp, length, options = _ASCII_HEAD.match(line).groups()
+                
+                dt_stamp, length = datetime.strptime(dt_stamp, _TIMESTAMP) + offset, int(length)
+                
+                payload = fin.read(length)
+                line_nr += payload.count('\n')
+                if options:
+                    if 'i' in options:
+                        step = timedelta(microseconds=20000)
+                        #to accomodate first step
+                        step_stamp = dt_stamp - step    
+                        #this is input we must extend it in a typewritter similar manner
+                        for c in payload:
+                            step_stamp += step
+                            yield step_stamp, c
+                        assert(fin.read(1)=='\n') #this should be a carriage return
+                        line_nr +=1
+                        offset += (step_stamp - dt_stamp)
+                        continue
+                    
+                yield dt_stamp, payload
+                assert(fin.read(1)=='\n') #this should be a carriage return
+                line_nr +=1
+        except:
+            print "Error in entry %s (line~%s): %s" % (entry_nr, line_nr, line)
+            raise 
 def ttyrec2list(tty_file, func = None):
     """:param tty_file: ttyrecord binary input file.
 :param func: if given will be applied to affect time. it is called with a datetime 

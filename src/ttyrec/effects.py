@@ -6,8 +6,7 @@ def norm_input(tty_list, cpm=350):
     """Normalizes input to the given CPM (characters per minute) speed.
 :param tty_list: a ttyrec list.
 :param cpm: characters per minute for the desired output."""
-    microsec_per_char = 60.0*1000000.0/cpm
-    char_time = timedelta(microseconds=microsec_per_char)
+    char_time = timedelta(microseconds=60.0 * 1000000.0 / cpm)
     last_tstamp = None
     offset = timedelta()
     for tstamp, payload in tty_list:
@@ -79,13 +78,32 @@ def change_speed(tty_list, speed=1):
             yield tstamp + offset, payload    
         last_tstamp = tstamp
 
-ttyrec.io.list2ttyrec(change_speed(ttyrec.io.ttyrec2list('/tmp/ttytest'),speed=5), '/tmp/ttytest4')
+def add_intro(tty_list, intro_delay=1):
+    """Clears the screen before starting and remain like that for a while.
 
-lgen_new = norm_input(tty_list)
-ttyrec.io.list2ttyrec(norm_input(ttyrec.io.ttyrec2list('/tmp/ttytest')), '/tmp/ttytest2')
-ttyrec.io.list2ttyrec(humanize_input(norm_input(ttyrec.io.ttyrec2list('/tmp/ttytest'), cpm=800), jitter=0.3, max_delay=0.5), '/tmp/ttytest3')
-ttyrec.io.list2ttyrec(cap_delays(ttyrec.io.ttyrec2list('/tmp/ttytest')), '/tmp/ttytest4')
-ttyrec.io.list2ttyrec(change_speed(ttyrec.io.ttyrec2list('/tmp/ttytest'),speed=5), '/tmp/ttytest4')
+:param tty_list: a ttyrec list.
+:param intro_delay: number of seconds (or fraction) to remain with the screen black."""
 
+    show_intro = True
+    clear_screen = '\x1b[H\x1b[2J'
+    
+    for tstamp, payload in tty_list:
+        if show_intro:
+            show_intro = False
+            yield tstamp - timedelta(seconds=intro_delay), clear_screen
+            
+        yield tstamp, payload
+    
 
-ttyrec.io.ttyrec2ascii('/tmp/ttytest3', '/tmp/ttytest3.ascii')
+def delay_lines(tty_list, delay_per_line=0.1):
+    """Break lines stored and show them with some delay, line by line.
+    
+:param tty_list: a ttyrec list.
+:param delay_per_line: seconds (or fraction) to wait between lines"""
+    delay = timedelta(microseconds=delay_per_line * 1000000)
+    offset = timedelta()
+    for tstamp, payload in tty_list:
+        for line in payload.splitlines(True):
+            yield tstamp + offset, line
+            offset += delay    
+    
