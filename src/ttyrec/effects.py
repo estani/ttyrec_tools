@@ -2,15 +2,29 @@
 from datetime import datetime, timedelta
 from ttyrec.utils import to_timestamp, to_timedelta
 
-def norm_input(tty_list, cpm=350):
+def norm_input(tty_list, cpm=350, jitter=0.2, max_delay=1, cap_to_max=False):
     """Normalizes input to the given CPM (characters per minute) speed.
 :param tty_list: a ttyrec list.
 :param cpm: characters per minute for the desired output."""
-    char_time = timedelta(microseconds=60.0 * 1000000.0 / cpm)
+    norm_char_time = timedelta(microseconds=60.0 * 1000000.0 / cpm)
+    from random import Random
+    r = Random(0)
+    def jitter_func(time):
+        res = r.random()
+        if res < 0.5:
+            return time * (res * 2 * jitter + (1-jitter))
+        elif time > max_delay:
+            if cap_to_max: return max_delay
+            else: return time
+        else:
+            res = (res - 0.5) * 2 * jitter
+            return (max_delay - time) * res + time
+    
     last_tstamp = None
     offset = timedelta()
     for tstamp, payload in tty_list:
-        if len(payload) == 1:
+        if last_tstamp and len(payload) == 1:
+            char_time = to_timedelta(jitter_func(to_timestamp(norm_char_time)))
             #this is the type of input we care for normalization
             offset += char_time - (tstamp - last_tstamp)
         
@@ -103,7 +117,30 @@ def delay_lines(tty_list, delay_per_line=0.1):
     delay = timedelta(microseconds=delay_per_line * 1000000)
     offset = timedelta()
     for tstamp, payload in tty_list:
+        first=True
         for line in payload.splitlines(True):
+            if first:
+                first=False
+            else:
+                offset += delay    
             yield tstamp + offset, line
-            offset += delay    
+
+def delay_input(tty_list, delay_before_input=0, delay_after_input=1):
+    """Adds some delay before nand/or after the input is done.
     
+:param tty_list: a ttyrec list.
+:param delay_before_input: seconds (or fraction) to wait before input starts.
+:param delay_after_input: seconds (or fraction) to wait after input finishes."""
+    delay_before = timedelta(microseconds=delay_before_input * 1000000)
+    delay_after = timedelta(microseconds=delay_after_input * 1000000)
+    offset = timedelta()
+    in_input = False
+    for tstamp, payload in tty_list:
+        if len(payload) == 1:
+            if not in_input:
+                offset += delay_before
+                in_input = True
+        elif in_input:
+            offset += delay_after
+            in_input = False
+        yield tstamp + offset, payload
