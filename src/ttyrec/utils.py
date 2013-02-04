@@ -6,7 +6,11 @@ def to_datetime(seconds=0, microseconds=0):
 def to_timedelta(seconds=0, microseconds=0):
     return timedelta(seconds=seconds) + timedelta(microseconds=microseconds)
 
-def to_timestamp(dt_object):
+def to_timestamp_tuple(dt_object):
     if isinstance(dt_object, timedelta):
         dt_object = datetime.fromtimestamp(0) + dt_object
-    return int(mktime(dt_object.timetuple())) + dt_object.microsecond / 1000000.0
+    return int(mktime(dt_object.timetuple())), dt_object.microsecond
+
+def to_timestamp(dt_object):
+    seconds, micro = to_timestamp_tuple(dt_object)
+    return seconds + micro / 1000000.0
