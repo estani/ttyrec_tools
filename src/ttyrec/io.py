@@ -357,13 +357,14 @@ defining this would be very simple.
         self._gen = gen(self._gen)
         return self.__store()
     
-    def merge_lines(self, threshold=0.01):
+    def merge_lines(self, threshold=0.01, merge_input=False):
         """Merge lines with less than threshold seconds pause together."""
         def gen(old_generator):
             last_entry = [to_datetime(0), None, None]
             carry = False
             for tstamp, payload, options in old_generator:
-                if to_timestamp(tstamp - last_entry[0]) < threshold and last_entry[1] is not None:
+                if to_timestamp(tstamp - last_entry[0]) < threshold and last_entry[1] is not None \
+                        and ('i' not in options or merge_input):
                     #we preserve the options from the first entry
                     last_entry[1] += payload
                     carry = True
@@ -396,3 +397,48 @@ defining this would be very simple.
         return self.__store()
         
         
+from time import sleep
+import curses
+import sys
+class Player(object):
+    def __init__(self):
+        self._stream = TTYrecStream()
+        
+    def load(self, tty_file):
+        self._stream.read_ttyrec(tty_file)
+    
+    def play(self):
+        try:
+            w = curses.initscr()
+            w.nodelay(True)
+            curses.noecho()
+            start = datetime.now()
+            last = None
+            offset = timedelta()
+            for tstamp, entry, _ in self._stream:
+                try:
+                    key = w.getkey()                    
+                    if key == 'q':
+                        break
+                    elif key in 'p ':
+                        pause_start = datetime.now()
+                        while True:
+                            try:
+                                key = w.getkey()
+                                if key in 'p ': 
+                                    break
+                            except:
+                                sleep(0.5)
+                        offset += datetime.now() - pause_start
+                except:
+                    pass
+                if last:
+                    offset += tstamp-last
+                    sleep(to_timestamp((start + offset) - datetime.now()))
+                sys.stdout.write(entry)
+                sys.stdout.flush() 
+                last = tstamp
+        finally:
+            curses.endwin()
+
+            
