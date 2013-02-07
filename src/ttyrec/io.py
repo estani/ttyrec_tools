@@ -2,6 +2,7 @@ from struct import unpack, pack
 from datetime import datetime, timedelta
 from inspect import currentframe, getargvalues
 import re
+import os
 
 from ttyrec.utils import to_datetime, to_timestamp, to_timestamp_tuple, to_timedelta
 
@@ -48,7 +49,25 @@ class Options(dict):
             else:
                 values.append('%s=%s' % (key, value))
         return ','.join(values)     
-    
+
+class Stream(object):
+    """Handle any string pointing to a path or any other similar object and close
+only if required (i.e. if it was opened here)"""
+    def __init__(self, path, *opts):
+        if isinstance(path, basestring):
+            path = os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
+            self.stream = open(path, *opts)
+            self.closeOnExit = True
+        else:
+            #don't close anything it wasn't opened here.
+            self.stream = path
+            self.closeOnExit = False
+    def __enter__(self):
+        return self.stream
+    def __exit__(self, exc_type, value, traceback):
+        if self.closeOnExit:
+            self.stream.close()
+            
 class TTYrecStream(object):
     """This objects encapsulates all handling of ttyrec files and their ascii representation.
 It works also as a generator so you can iterate the results as may times as required.
@@ -104,14 +123,14 @@ defining this would be very simple.
         it = self._gen
         self.__reload()
         return it
-
+    
     def read_ttyrec(self, tty_file):
         """Reads a ttyrec binary file.
 
 :param tty_file: ttyrecord binary input file.
 :returns: This object"""
         def gen():
-            with open(tty_file, 'rb') as fin:
+            with Stream(tty_file, 'rb') as fin:
                 try:
                     while True:
                         sec, usec, length = unpack(_HEADER, fin.read(_HEADER_SIZE))
@@ -135,7 +154,7 @@ defining this would be very simple.
             entry_nr=0
             line_nr=0
             start_time = None
-            with open(ascii_file, 'r') as fin:
+            with Stream(ascii_file, 'r') as fin:
                 try:
                     offset = timedelta()
                     while True:
@@ -177,25 +196,19 @@ defining this would be very simple.
 :param ascii_file: ascii output file.
     """
         last_time = None
-        if isinstance(ascii_file, basestring):
-            fout = open(ascii_file, 'w')
-        else:
-            fout = ascii_file
-        for dt_stamp, payload, options in self._gen:
-            #convert
-            if last_time is None:
+        with Stream(ascii_file, 'w') as fout:
+            for dt_stamp, payload, options in self._gen:
+                #convert
+                if last_time is None:
+                    last_time = dt_stamp
+                    #first entry retains absolute time
+                    fout.write('[%s] %s %s\n%s\n' % (last_time.strftime(_TIMESTAMP), len(payload), options, payload))
+                else:
+                    offset = dt_stamp - last_time
+                    #allow some simple time manipulation
+                    fout.write('[%s] %s %s\n%s\n' % (to_timestamp(offset), len(payload), options, payload))
                 last_time = dt_stamp
-                #first entry retains absolute time
-                fout.write('[%s] %s %s\n%s\n' % (last_time.strftime(_TIMESTAMP), len(payload), options, payload))
-            else:
-                offset = dt_stamp - last_time
-                #allow some simple time manipulation
-                fout.write('[%s] %s %s\n%s\n' % (to_timestamp(offset), len(payload), options, payload))
-            last_time = dt_stamp
             
-        #clean
-        if isinstance(ascii_file, basestring):
-            fout.close()
         #we have consumed the iterator, set it up again
         self.__reload()
         return self
@@ -221,7 +234,7 @@ defining this would be very simple.
                 res = (res - 0.5) * 2 * jitter
                 return (max_delay - time) * res + time
 
-        with open(tty_file , 'wb') as fout:
+        with Stream(tty_file , 'wb') as fout:
             offset = timedelta()
             for dt_stamp, payload, options in self._gen:
                 length = len(payload)
@@ -340,21 +353,29 @@ defining this would be very simple.
             in_input = False
             last_stamp = None
             for tstamp, payload, options in old_generator:
-                if 'i' in options:
-                    if not in_input:
-                        offset += delay_before
-                        in_input = True
-                elif in_input:
-                    offset += delay_after
-                    in_input = False
-                new_stamp = tstamp + offset
-                if last_stamp and new_stamp < last_stamp:
-                    #correct
-                    offset +=  tstamp + offset - last_stamp
-                    new_stamp = last_stamp
-                yield new_stamp, payload, options
-                last_stamp = tstamp + offset
+                if last_stamp is not None:
+                    elapsed = tstamp - last_stamp
+                    if 'i' in options:
+                        if not in_input:
+                            offset +=  delay_before - elapsed
+                            in_input = True
+                    elif in_input:
+                        offset += delay_after - elapsed 
+                        in_input = False
+                yield tstamp + offset, payload, options
+                last_stamp = tstamp
         self._gen = gen(self._gen)
+        return self.__store()
+    
+    def raw_effect(self, func=None):
+        if func is not None:
+            def gen(old_generator):
+                for tstamp, payload, options in old_generator:
+                    yield func(tstamp, payload, options)
+        self._gen = gen(self._gen)
+        return self.__store()
+    def effect(self, generator):
+        self._gen = generator(self._gen)
         return self.__store()
     
     def merge_lines(self, threshold=0.01, merge_input=False):
@@ -401,44 +422,73 @@ from time import sleep
 import curses
 import sys
 class Player(object):
-    def __init__(self):
-        self._stream = TTYrecStream()
+    def __init__(self, stream = None):
+        if stream is None:
+            stream = TTYrecStream()
+        self._stream = stream
         
     def load(self, tty_file):
         self._stream.read_ttyrec(tty_file)
     
-    def play(self):
+    def play(self, speed=1.0):
         try:
             w = curses.initscr()
             w.nodelay(True)
             curses.noecho()
             start = datetime.now()
+            first = None
             last = None
             offset = timedelta()
+            running = True
             for tstamp, entry, _ in self._stream:
                 try:
-                    key = w.getkey()                    
-                    if key == 'q':
-                        break
-                    elif key in 'p ':
-                        pause_start = datetime.now()
-                        while True:
-                            try:
+                    while True:
+                        #we consume all events before proceeding
+                        #to avoid processing old signals
+                        key = w.getch()
+                        if key == curses.ERR:
+                            #all events has been consumed
+                            break                
+                        if key == ord('q'):
+                            running=True
+                        elif key in map(ord, 'p '):
+                            pause_start = datetime.now()
+                            w.nodelay(False)
+                            while True:
                                 key = w.getkey()
                                 if key in 'p ': 
                                     break
-                            except:
-                                sleep(0.5)
-                        offset += datetime.now() - pause_start
+                            offset += datetime.now() - pause_start
+                            w.nodelay(True)
+                        elif key == ord('f'):
+                            if speed < 10:
+                                speed *= 2.0
+                        elif key == ord('s'):
+                            if speed > 0.01:
+                                speed /= 2.0
+                        elif key == ord('0'):
+                            speed = 0.5
+                        elif key >= ord('1') and key <= ord('9'):
+                            speed = float(key - ord('0'))
+                            
                 except:
                     pass
+                if not running:
+                    break
                 if last:
-                    offset += tstamp-last
+                    offset += to_timedelta(seconds=to_timestamp(tstamp-last) / speed)
                     sleep(to_timestamp((start + offset) - datetime.now()))
+                else:
+                    first = tstamp
                 sys.stdout.write(entry)
                 sys.stdout.flush() 
                 last = tstamp
+            recording_time=last-first
+            play_time=offset
         finally:
             curses.endwin()
+
+        print "Recording: %s" % recording_time
+        print "Play time: %s" % play_time
 
             
