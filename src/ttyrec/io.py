@@ -430,7 +430,7 @@ class Player(object):
     def load(self, tty_file):
         self._stream.read_ttyrec(tty_file)
     
-    def play(self, speed=1.0):
+    def play(self, speed=1.0, interactive=True):
         try:
             w = curses.initscr()
             w.nodelay(True)
@@ -441,38 +441,39 @@ class Player(object):
             offset = timedelta()
             running = True
             for tstamp, entry, _ in self._stream:
-                try:
-                    while True:
-                        #we consume all events before proceeding
-                        #to avoid processing old signals
-                        key = w.getch()
-                        if key == curses.ERR:
-                            #all events has been consumed
-                            break                
-                        if key == ord('q'):
-                            running=True
-                        elif key in map(ord, 'p '):
-                            pause_start = datetime.now()
-                            w.nodelay(False)
-                            while True:
-                                key = w.getkey()
-                                if key in 'p ': 
-                                    break
-                            offset += datetime.now() - pause_start
-                            w.nodelay(True)
-                        elif key == ord('f'):
-                            if speed < 10:
-                                speed *= 2.0
-                        elif key == ord('s'):
-                            if speed > 0.01:
-                                speed /= 2.0
-                        elif key == ord('0'):
-                            speed = 0.5
-                        elif key >= ord('1') and key <= ord('9'):
-                            speed = float(key - ord('0'))
-                            
-                except:
-                    pass
+                if interactive:
+                    try:
+                        while True:
+                            #we consume all events before proceeding
+                            #to avoid processing old signals
+                            key = w.getch()
+                            if key == curses.ERR:
+                                #all events has been consumed
+                                break
+                            if key == ord('q'):
+                                running=False
+                            elif key in map(ord, 'p '):
+                                pause_start = datetime.now()
+                                w.nodelay(False)
+                                while True:
+                                    key = w.getkey()
+                                    if key in 'p ': 
+                                        break
+                                offset += datetime.now() - pause_start
+                                w.nodelay(True)
+                            elif key == ord('f'):
+                                if speed < 10:
+                                    speed *= 2.0
+                            elif key == ord('s'):
+                                if speed > 0.01:
+                                    speed /= 2.0
+                            elif key == ord('0'):
+                                speed = 0.5
+                            elif key >= ord('1') and key <= ord('9'):
+                                speed = float(key - ord('0'))
+                                
+                    except:
+                        pass
                 if not running:
                     break
                 if last:
